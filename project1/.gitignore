@@ -1,0 +1,6 @@
+test/
+train/
+validation/
+test.hf/
+train.hf/
+*.hdf5
