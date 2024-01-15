@@ -95,6 +95,7 @@ class PTTrainer:
                 curr_patience += 1
             else:
                 curr_patience = 0
+                torch.save(self.model, "best_resnet.pth")
 
             val_accuracy.append(acc)
             val_loss.append(loss)
@@ -102,6 +103,7 @@ class PTTrainer:
                 print('Validation Acc: {:.2f}% Loss: {:.2f} Time: {:.0f}s'.format(acc * 100, loss, time.time() - start_time))
             if curr_patience == patience:
                 break
+        torch.save(self.model, "last_resnet.pth")
         return train_accuracy, val_accuracy, train_loss, val_loss
 
     def validate(self, test_loader, device="cuda"):
