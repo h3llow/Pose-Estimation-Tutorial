@@ -1,8 +1,12 @@
+from copy import deepcopy
+
 import numpy as np
+import sklearn.metrics
 import torch
 import time
 
-from transformers import TrainingArguments
+import wandb
+from transformers import TrainingArguments, TrainerCallback
 from transformers import Trainer, EarlyStoppingCallback
 from datasets import load_metric
 
@@ -105,7 +109,6 @@ class PTTrainer:
         model.eval()
         pred = []
         label = []
-        import time
 
         start = time.time()
         for i, (inputs, labels) in enumerate(test_loader):
@@ -119,7 +122,7 @@ class PTTrainer:
                 _, preds = torch.max(outputs, 1)
                 pred += list(preds.to("cpu"))
         end = time.time()
-        print("Inference time per image is", str(round(((end - start) * 1000) / len(label))) + "ms on the device " + torch.cuda.get_device_name() + ".")
+        print("Avergae inference time per image is", str(round(((end - start) * 1000) / len(label))) + "ms on the device " + torch.cuda.get_device_name() + ".")
         return label, pred
 
 class HFTrainer:
@@ -127,22 +130,24 @@ class HFTrainer:
         self.model = model
         self.processor = processor
 
-    def train(self, train_set, val_set, bs=64, epochs=50, lr=2e-4, patience=5, report_to="", log=True):
+    def train(self, train_set, val_set, bs=64, epochs=50, lr=2e-4, patience=5, report_to="", checkpoint_dir="x_checkpoints"):
         training_args = TrainingArguments(
-            output_dir="./vit-base-beans",
+            output_dir=checkpoint_dir,
             per_device_train_batch_size=bs,
-            evaluation_strategy="steps",
+            evaluation_strategy="epoch",
+            save_strategy="epoch",
             num_train_epochs=epochs,
             fp16=True,
-            save_steps=100,
-            eval_steps=50,
+            save_steps=bs,
+            logging_strategy="epoch",
+            eval_steps=bs,
             logging_steps=10,
             learning_rate=lr,
-            save_total_limit=2,
+            save_total_limit=10,
             remove_unused_columns=False,
             push_to_hub=False,
             report_to=report_to,
-            load_best_model_at_end=True,
+            load_best_model_at_end=True
         )
 
         def collate_fn(batch):
@@ -164,7 +169,47 @@ class HFTrainer:
             train_dataset=train_set,
             eval_dataset=val_set,
             tokenizer=self.processor,
-            callbacks=[EarlyStoppingCallback(early_stopping_patience=patience)]
+            callbacks=[EarlyStoppingCallback(early_stopping_patience=patience)],
         )
 
+
+        class CustomCallback(TrainerCallback):
+
+            def __init__(self, trainer) -> None:
+                super().__init__()
+                self._trainer = trainer
+
+            def on_epoch_end(self, args, state, control, **kwargs):
+                if control.should_evaluate:
+                    control_copy = deepcopy(control)
+                    self._trainer.evaluate(eval_dataset=self._trainer.train_dataset, metric_key_prefix="train")
+                    return control_copy
+        trainer.add_callback(CustomCallback(trainer))
+
         trainer.train()
+        wandb.finish()
+        metrics = {"train_accuracy": [], "eval_accuracy": [], "loss": [], "eval_loss": []}
+        for entry in trainer.state.log_history:
+            for metric in ["train_accuracy", "eval_accuracy", "loss", "eval_loss"]:
+                if metric in entry:
+                    metrics[metric].append(entry[metric])
+
+        return metrics["train_accuracy"], metrics["eval_accuracy"], metrics["loss"], metrics["eval_loss"]
+    def validate(self, test_loader, device="cuda"):
+        model = self.model.to(device)
+        model.eval()
+        pred = []
+        label = []
+        start = time.time()
+        for i, (inputs, labels) in enumerate(test_loader):
+            with torch.no_grad():
+                label += list(labels)
+                inputs = inputs.to(device)
+
+                outputs = model(inputs)
+                _, preds = torch.max(outputs.logits, 1)
+                pred += list(preds.to("cpu"))
+
+        end = time.time()
+        print("Average inference time per image is", str(round(((end - start) * 1000) / len(label))) + "ms on the device " + torch.cuda.get_device_name() + ".")
+        return label, pred

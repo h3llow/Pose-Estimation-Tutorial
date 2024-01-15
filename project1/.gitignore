@@ -1,6 +1,4 @@
 test/
 train/
-validation/
-test.hf/
-train.hf/
+wandb/
 *.hdf5
