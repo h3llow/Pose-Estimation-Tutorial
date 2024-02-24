@@ -1,7 +1,0 @@
-test/
-train/
-wandb/
-bit_checkpoints/
-vit_checkpoints/
-__pycache__/
-*.pth
